@@ -38,7 +38,53 @@
         messagingSenderId: "",
         appId: "",
       };
+      // Optional: point to the Cloud Run backend for booking requests.
+      window.BACKEND_BASE_URL = ""; // e.g. "https://your-service-abc123.a.run.app"
     </script>
+    <div id="booking-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="booking-title">
+      <div class="modal-panel">
+        <h2 id="booking-title">Book appointment</h2>
+        <form id="booking-form">
+          <label for="booking-name">
+            Customer name
+            <input id="booking-name" name="customerName" type="text" autocomplete="name" />
+          </label>
+          <label for="booking-phone">
+            Customer phone
+            <input id="booking-phone" name="customerPhone" type="tel" autocomplete="tel" />
+          </label>
+          <label for="booking-start" class="with-hint">
+            Appointment start
+            <input id="booking-start" name="start" type="datetime-local" required />
+            <span class="field-hint" id="booking-timezone-hint"></span>
+          </label>
+          <label for="booking-duration">
+            Duration
+            <select id="booking-duration" name="duration" data-default="60">
+              <option value="30">30 minutes</option>
+              <option value="45">45 minutes</option>
+              <option value="60" selected>60 minutes</option>
+              <option value="90">90 minutes</option>
+              <option value="120">120 minutes</option>
+            </select>
+          </label>
+          <label for="booking-notes">
+            Notes for the calendar entry
+            <textarea
+              id="booking-notes"
+              name="notes"
+              rows="4"
+              placeholder="Include arrival instructions or commitments from the call"
+            ></textarea>
+          </label>
+          <p class="modal-message" id="booking-message" role="status" aria-live="polite"></p>
+          <div class="modal-actions">
+            <button type="button" id="booking-cancel">Cancel</button>
+            <button type="submit" id="booking-submit">Schedule</button>
+          </div>
+        </form>
+      </div>
+    </div>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
     <script src="./app.js" type="module"></script>

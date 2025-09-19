@@ -58,6 +58,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 - [`backend/main.py`](backend/main.py) exposes:
   - `GET /healthz` for liveness checks.
   - `WS /audiostream` that accepts Twilio Stream frames, converts μ-law → 16 kHz PCM, feeds Picovoice Cheetah, and forwards transcript + Gemini cards to Firebase.
+  - `POST /bookings` that takes the receptionist’s booking form submission, creates a Google Calendar event, and writes the result back to Firebase.
 - Environment variables (copy [`backend/.env.example`](backend/.env.example)):
 
   | Key | Purpose |
@@ -68,7 +69,16 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
   | `FIREBASE_DB_SECRET` | Optional database secret/custom token for REST writes. |
   | `FREE_TIER_GUARD` | Set to `true` to auto-pause once `FREE_TIER_MAX_MINUTES` is exceeded. |
   | `FREE_TIER_MAX_MINUTES` | Defaults to 5,400 (≈ 90 hours). |
+  | `ALLOWED_ORIGINS` | Comma-separated list of dashboard origins allowed to call the API. |
+  | `CALENDAR_ID` | Google Calendar ID (e.g. `primary` or a shared calendar address). |
+  | `GOOGLE_SERVICE_ACCOUNT_INFO` | Inline JSON (or base64) for the service account; you can also mount a file and set `GOOGLE_APPLICATION_CREDENTIALS`. |
   | `PORT` | Overridden automatically by Cloud Run. |
+
+- **Google Calendar hookup:**
+  1. Create a service account in the same Google Cloud project, enable the Calendar API, and download the JSON credentials.
+  2. Share the target calendar (e.g. `primary` or a dedicated team calendar) with the service-account email and grant “Make changes to events”.
+  3. Provide the credentials to Cloud Run either by pasting JSON into `GOOGLE_SERVICE_ACCOUNT_INFO` or by mounting the file and setting `GOOGLE_APPLICATION_CREDENTIALS`.
+  4. Set `CALENDAR_ID` to the calendar you shared. The backend will write booking metadata back to `calls/{CallSid}` for the dashboard.
 
 - Deploy with one command (after filling `backend/.env` and authenticating `gcloud`):
 
@@ -86,10 +96,12 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 
 - [`receptionist/index.html`](receptionist/index.html) + [`app.js`](receptionist/app.js) + [`style.css`](receptionist/style.css).
 - Paste your Firebase config in the inline `window.FIREBASE_CONFIG` object and run `firebase deploy --only hosting`.
+- Set `window.BACKEND_BASE_URL` in `index.html` to point at the Cloud Run service (e.g. `https://your-service.a.run.app`).
 - The dashboard:
   - Subscribes to `calls/{CallSid}` in Realtime Database.
   - Streams the transcript and AI card in real time.
-  - Provides a one-click **Book appointment** button that pushes to `calls/{CallSid}/actions` (ready for a Cloud Function that hits Google Calendar).
+  - Opens a booking modal so the receptionist can confirm name, phone, time, and notes.
+  - Calls the backend `POST /bookings` endpoint to create the Google Calendar event and mirrors the record into Firebase; if no backend is configured it falls back to Firebase-only logging.
   - Accepts `?call=<CallSid>` in the URL to lock onto a specific conversation, otherwise follows the newest call.
   - Runs a built-in simulated call demo if the Firebase config is left blank so you can show the UI without wiring any backends.
 

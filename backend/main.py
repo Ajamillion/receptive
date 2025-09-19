@@ -9,17 +9,22 @@ import os
 import time
 from array import array
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, Optional, Tuple
 
 import audioop
 import google.generativeai as genai
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import pvcheetah
 from dotenv import load_dotenv
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from pydantic import BaseModel, Field, validator
 
 LOGGER = logging.getLogger("backend")
 
@@ -31,6 +36,14 @@ FIREBASE_RTDB_URL = os.getenv("FIREBASE_RTDB_URL", "").rstrip("/")
 FIREBASE_DB_SECRET = os.getenv("FIREBASE_DB_SECRET")
 FREE_TIER_GUARD = os.getenv("FREE_TIER_GUARD", "false").lower() == "true"
 MAX_CALL_MINUTES = float(os.getenv("FREE_TIER_MAX_MINUTES", 90.0 * 60.0))
+CALENDAR_ID = os.getenv("CALENDAR_ID")
+SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_SERVICE_ACCOUNT_INFO")
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+ALLOWED_ORIGINS = [
+    origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",") if origin.strip()
+]
+if not ALLOWED_ORIGINS:
+    ALLOWED_ORIGINS = ["*"]
 
 for key, value in (
     ("CHEETAH_ACCESS_KEY", CHEETAH_ACCESS_KEY),
@@ -43,6 +56,13 @@ for key, value in (
 genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(title="GV AI Co-pilot Backend")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 GEMINI_PROMPT = (
     "You are an AI assistant listening to phone calls between a customer and a home-services receptionist. "
@@ -66,11 +86,160 @@ class FirebaseClient:
         except httpx.HTTPError as exc:
             LOGGER.error("Firebase PATCH %s failed: %s", path, exc)
 
+    async def post(self, path: str, payload: Dict) -> Optional[str]:
+        url = f"{self._base}/{path}.json"
+        try:
+            response = await self._client.post(url, json=payload, params=self._params)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict):
+                return data.get("name")
+        except httpx.HTTPError as exc:
+            LOGGER.error("Firebase POST %s failed: %s", path, exc)
+        return None
+
     async def close(self) -> None:
         await self._client.aclose()
 
 
 GEMINI_MODEL = genai.GenerativeModel("gemini-1.5-flash")
+
+CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
+MAX_EVENT_SUMMARY = 120
+MAX_EVENT_DESCRIPTION = 7000
+MAX_TRANSCRIPT_SNIPPET = 2000
+
+
+def _clip(text: Optional[str], limit: int) -> Optional[str]:
+    if not text:
+        return None
+    cleaned = text.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 1]}…"
+
+
+def _compact(data: Dict[str, object]) -> Dict[str, object]:
+    return {key: value for key, value in data.items() if value not in (None, "")}
+
+
+def _load_calendar_credentials() -> service_account.Credentials:
+    if SERVICE_ACCOUNT_INFO:
+        raw = SERVICE_ACCOUNT_INFO.strip()
+        if not raw.startswith("{"):
+            try:
+                raw = base64.b64decode(raw).decode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_INFO must be JSON or base64-encoded JSON") from exc
+        try:
+            info = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Invalid GOOGLE_SERVICE_ACCOUNT_INFO JSON") from exc
+        return service_account.Credentials.from_service_account_info(info, scopes=CALENDAR_SCOPES)
+
+    if SERVICE_ACCOUNT_FILE and os.path.exists(SERVICE_ACCOUNT_FILE):
+        return service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=CALENDAR_SCOPES
+        )
+
+    raise RuntimeError(
+        "Service account credentials not configured. Set GOOGLE_SERVICE_ACCOUNT_INFO or GOOGLE_APPLICATION_CREDENTIALS."
+    )
+
+
+class BookingRequest(BaseModel):
+    call_sid: str = Field(..., alias="callSid")
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    customer_phone: Optional[str] = Field(None, alias="customerPhone")
+    start: datetime = Field(..., alias="startIso")
+    duration_minutes: int = Field(60, alias="durationMinutes")
+    notes: Optional[str] = Field(None, alias="notes")
+    summary: Optional[str] = Field(None, alias="summary")
+    transcript: Optional[str] = Field(None, alias="transcript")
+    time_zone: Optional[str] = Field(None, alias="timeZone")
+    action_items: Optional[Iterable[str]] = Field(None, alias="actionItems")
+
+    @validator("start", pre=True)
+    def _parse_start(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.replace("Z", "+00:00")
+        return value
+
+    @validator("duration_minutes")
+    def _validate_duration(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("durationMinutes must be positive")
+        return value
+
+    @property
+    def start_at(self) -> datetime:
+        dt = self.start
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @property
+    def end_at(self) -> datetime:
+        return self.start_at + timedelta(minutes=self.duration_minutes)
+
+
+async def create_calendar_event(request: BookingRequest) -> Dict:
+    if not CALENDAR_ID:
+        raise RuntimeError("CALENDAR_ID is not configured")
+
+    summary_hint = request.summary or "Service appointment"
+    if request.customer_name:
+        summary_hint = f"{request.customer_name} – {summary_hint}"
+    summary = _clip(summary_hint, MAX_EVENT_SUMMARY) or "Service appointment"
+
+    description_parts = []
+    notes = _clip(request.notes, MAX_EVENT_DESCRIPTION)
+    if notes:
+        description_parts.append(notes)
+
+    if request.summary and request.summary != notes:
+        description_parts.append(f"AI summary: {request.summary}")
+
+    if request.action_items:
+        items = [f"- {item}" for item in request.action_items if item]
+        if items:
+            description_parts.append("Action items:\n" + "\n".join(items))
+
+    transcript_snippet = _clip(request.transcript, MAX_TRANSCRIPT_SNIPPET)
+    if transcript_snippet:
+        description_parts.append(f"Transcript excerpt:\n{transcript_snippet}")
+
+    description_parts.append(f"Call SID: {request.call_sid}")
+    if request.customer_phone:
+        description_parts.append(f"Callback: {request.customer_phone}")
+
+    description = _clip("\n\n".join(description_parts), MAX_EVENT_DESCRIPTION)
+
+    start_dt = request.start_at
+    end_dt = request.end_at
+
+    body = {
+        "summary": summary,
+        "description": description,
+        "start": {"dateTime": start_dt.isoformat()},
+        "end": {"dateTime": end_dt.isoformat()},
+        "extendedProperties": {"private": {"callSid": request.call_sid}},
+    }
+
+    if request.time_zone:
+        body["start"]["timeZone"] = request.time_zone
+        body["end"]["timeZone"] = request.time_zone
+
+    def _insert_event() -> Dict:
+        credentials = _load_calendar_credentials()
+        service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
+        return service.events().insert(calendarId=CALENDAR_ID, body=body).execute()
+
+    try:
+        return await asyncio.to_thread(_insert_event)
+    except HttpError as exc:
+        LOGGER.error("Google Calendar API error: %s", exc)
+        raise RuntimeError(exc.reason or "Google Calendar API error") from exc
 
 
 async def build_ai_card(transcript: str) -> Optional[Dict]:
@@ -165,6 +334,87 @@ class CheetahStream:
 
 async def update_firebase(firebase: FirebaseClient, state: TranscriptState) -> None:
     await firebase.patch(f"calls/{state.call_sid}", {"status": "listening", "transcript": {"final": state.final_text, "partial": state.partial_text, "updatedAt": datetime.now(timezone.utc).isoformat()}})
+
+
+def _extract_event_datetime(event: Dict, field: str) -> Optional[str]:
+    value = event.get(field)
+    if isinstance(value, dict):
+        return value.get("dateTime") or value.get("date")
+    return None
+
+
+@app.post("/bookings")
+async def create_booking_endpoint(request: BookingRequest) -> Dict:
+    if not CALENDAR_ID:
+        raise HTTPException(status_code=503, detail="Calendar integration is not configured")
+
+    try:
+        event = await create_calendar_event(request)
+    except RuntimeError as exc:
+        message = str(exc)
+        status = 503 if "not configured" in message.lower() else 500
+        raise HTTPException(status_code=status, detail=message) from exc
+
+    event_start = _extract_event_datetime(event, "start") or request.start_at.isoformat()
+    event_end = _extract_event_datetime(event, "end") or request.end_at.isoformat()
+    event_summary = event.get("summary") or request.summary or "Service appointment"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    firebase = FirebaseClient(FIREBASE_RTDB_URL, FIREBASE_DB_SECRET)
+
+    booking_payload = _compact(
+        {
+            "eventId": event.get("id"),
+            "htmlLink": event.get("htmlLink"),
+            "start": event_start,
+            "end": event_end,
+            "createdAt": now_iso,
+            "customerName": request.customer_name,
+            "customerPhone": request.customer_phone,
+            "notes": request.notes,
+            "summary": request.summary,
+            "actionItems": list(request.action_items) if request.action_items else None,
+        }
+    )
+
+    action_payload = _compact(
+        {
+            "type": "book",
+            "createdAt": now_iso,
+            "eventId": event.get("id"),
+            "start": event_start,
+            "end": event_end,
+            "customerName": request.customer_name,
+            "customerPhone": request.customer_phone,
+            "notes": request.notes,
+            "summary": request.summary,
+            "actionItems": list(request.action_items) if request.action_items else None,
+        }
+    )
+    action_payload["callSid"] = request.call_sid
+
+    try:
+        await firebase.patch(
+            f"calls/{request.call_sid}",
+            {
+                "booking": booking_payload,
+                "bookingUpdatedAt": now_iso,
+            },
+        )
+        await firebase.post(f"calls/{request.call_sid}/actions", action_payload)
+    finally:
+        await firebase.close()
+
+    return {
+        "callSid": request.call_sid,
+        "event": {
+            "id": event.get("id"),
+            "htmlLink": event.get("htmlLink"),
+            "start": event_start,
+            "end": event_end,
+            "summary": event_summary,
+        },
+    }
 
 
 @app.websocket("/audiostream")

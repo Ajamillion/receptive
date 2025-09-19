@@ -2,5 +2,8 @@ fastapi==0.111.0
 uvicorn[standard]==0.29.0
 httpx==0.27.0
 google-generativeai==0.5.3
+google-api-python-client==2.128.0
+google-auth==2.29.0
+google-auth-httplib2==0.2.0
 pvcheetah==2.1.1
 python-dotenv==1.0.1
