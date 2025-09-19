@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GV AI Co-pilot</title>
+    <link rel="stylesheet" href="style.css" />
+    <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <script>
+      window.FIREBASE_CONFIG = {
+        apiKey: "",
+        authDomain: "",
+        databaseURL: "",
+        projectId: "",
+        storageBucket: "",
+        messagingSenderId: "",
+        appId: "",
+      };
+      window.BACKEND_BASE_URL = "";
+    </script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header class="top-bar">
+      <div>
+        <p class="eyebrow">GV AI co-pilot</p>
+        <h1>Receptionist dashboard</h1>
+      </div>
+      <p id="status" class="status">Waiting for a call…</p>
+    </header>
+
+    <main class="layout">
+      <section class="card caller">
+        <header>
+          <h2>Caller details</h2>
+          <p id="call-id" class="call-id" hidden></p>
+        </header>
+        <dl class="caller-meta">
+          <div>
+            <dt>Name</dt>
+            <dd id="caller-name">—</dd>
+          </div>
+          <div>
+            <dt>Number</dt>
+            <dd id="caller-number">—</dd>
+          </div>
+          <div>
+            <dt>Forwarded to</dt>
+            <dd id="caller-forwarded">—</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="card transcript">
+        <h2>Transcript</h2>
+        <p id="transcript-final" class="transcript-final">No transcript yet.</p>
+        <p id="transcript-partial" class="transcript-partial"></p>
+      </section>
+
+      <section class="card ai">
+        <h2>AI guidance</h2>
+        <p id="ai-summary" class="ai-summary">Waiting for summary…</p>
+        <p id="ai-meta" class="ai-meta"></p>
+        <ul id="ai-actions" class="ai-actions">
+          <li class="muted">No action items yet.</li>
+        </ul>
+      </section>
+
+      <section class="card booking">
+        <h2>Book this caller</h2>
+        <form id="booking-form" autocomplete="off">
+          <label>
+            Name
+            <input id="booking-name" type="text" placeholder="Alex Smith" autocomplete="name" />
+          </label>
+          <label>
+            Phone number
+            <input id="booking-phone" type="tel" placeholder="+1 555 123 4567" autocomplete="tel" />
+          </label>
+          <label>
+            Start time
+            <input id="booking-start" type="datetime-local" required />
+          </label>
+          <label>
+            Duration (minutes)
+            <input id="booking-duration" type="number" min="15" step="15" value="60" required />
+          </label>
+          <label>
+            Notes
+            <textarea id="booking-notes" rows="3" placeholder="Arrival window, gate code, etc."></textarea>
+          </label>
+          <button id="booking-submit" type="submit" class="primary" disabled>
+            Save to calendar
+          </button>
+        </form>
+        <p id="booking-result" class="booking-result"></p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Start>
+    <Stream url="wss://your-cloud-run-url.run.app/audiostream" />
+  </Start>
+  <Dial callerId="+1YOUR-GV-NUMBER">
+    <Number>+1RECEPTIONIST-PHONE</Number>
+  </Dial>
+</Response>
