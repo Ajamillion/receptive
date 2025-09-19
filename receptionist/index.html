@@ -1,35 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GV AI Co-pilot</title>
-    <link rel="stylesheet" href="./style.css" />
-  </head>
-  <body>
-    <main class="container">
-      <header>
-        <h1>Receptionist Co-pilot</h1>
-        <p class="status" id="call-status">Waiting for call…</p>
-      </header>
-      <section class="panels">
-        <article class="panel" id="transcript-panel">
-          <h2>Live transcript</h2>
-          <div id="transcript-text" class="transcript"></div>
-        </article>
-        <article class="panel" id="insights-panel">
-          <h2>AI assistant</h2>
-          <div id="ai-summary" class="card"></div>
-          <div id="ai-actions" class="card"></div>
-          <div id="action-log" class="card action-log"></div>
-          <button id="book-button" disabled>Book appointment</button>
-          <p class="hint">Use ?call=&lt;CallSid&gt; in the URL to pin a conversation.</p>
-        </article>
-      </section>
-    </main>
-
+    <link rel="stylesheet" href="style.css" />
+    <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <script>
-      // Fill this object with your Firebase project configuration (Firebase console → Project settings → General).
       window.FIREBASE_CONFIG = {
         apiKey: "",
         authDomain: "",
@@ -39,55 +17,73 @@
         messagingSenderId: "",
         appId: "",
       };
-      // Optional: point to the Cloud Run backend for booking requests.
-      window.BACKEND_BASE_URL = ""; // e.g. "https://your-service-abc123.a.run.app"
+      window.BACKEND_BASE_URL = "";
     </script>
-    <div id="booking-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="booking-title">
-      <div class="modal-panel">
-        <h2 id="booking-title">Book appointment</h2>
-        <form id="booking-form">
-          <label for="booking-name">
-            Customer name
-            <input id="booking-name" name="customerName" type="text" autocomplete="name" />
-          </label>
-          <label for="booking-phone">
-            Customer phone
-            <input id="booking-phone" name="customerPhone" type="tel" autocomplete="tel" />
-          </label>
-          <label for="booking-start" class="with-hint">
-            Appointment start
-            <input id="booking-start" name="start" type="datetime-local" required />
-            <span class="field-hint" id="booking-timezone-hint"></span>
-          </label>
-          <label for="booking-duration">
-            Duration
-            <select id="booking-duration" name="duration" data-default="60">
-              <option value="30">30 minutes</option>
-              <option value="45">45 minutes</option>
-              <option value="60" selected>60 minutes</option>
-              <option value="90">90 minutes</option>
-              <option value="120">120 minutes</option>
-            </select>
-          </label>
-          <label for="booking-notes">
-            Notes for the calendar entry
-            <textarea
-              id="booking-notes"
-              name="notes"
-              rows="4"
-              placeholder="Include arrival instructions or commitments from the call"
-            ></textarea>
-          </label>
-          <p class="modal-message" id="booking-message" role="status" aria-live="polite"></p>
-          <div class="modal-actions">
-            <button type="button" id="booking-cancel">Cancel</button>
-            <button type="submit" id="booking-submit">Schedule</button>
-          </div>
-        </form>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">GV AI co-pilot</p>
+        <h1>Live receptionist dashboard</h1>
       </div>
-    </div>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-    <script src="./app.js" type="module"></script>
+      <p id="call-status" class="status">Waiting for a call…</p>
+    </header>
+
+    <main class="layout">
+      <section class="card">
+        <header class="card-header">
+          <h2>Transcript</h2>
+        </header>
+        <div id="transcript" class="card-body">
+          <p class="placeholder">No transcript yet.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <header class="card-header insights">
+          <h2>AI insights</h2>
+          <button id="book-button" class="primary" disabled>Book appointment</button>
+        </header>
+        <div class="card-body">
+          <div id="ai-summary">
+            <p class="placeholder">Waiting for summary…</p>
+          </div>
+          <div id="ai-actions"></div>
+          <div id="booking-details" class="booking-details"></div>
+          <div id="booking-status" class="booking-status"></div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="booking-dialog">
+      <form id="booking-form">
+        <h2>Book appointment</h2>
+        <label>
+          Customer name
+          <input id="booking-name" type="text" placeholder="Alex Smith" autocomplete="name" />
+        </label>
+        <label>
+          Phone number
+          <input id="booking-phone" type="tel" placeholder="+1 555 123 4567" autocomplete="tel" />
+        </label>
+        <label>
+          Start time
+          <input id="booking-start" type="datetime-local" required />
+        </label>
+        <label>
+          Duration (minutes)
+          <input id="booking-duration" type="number" min="15" step="15" value="60" />
+        </label>
+        <label>
+          Notes
+          <textarea id="booking-notes" rows="3" placeholder="Any important details"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button type="button" id="booking-cancel">Cancel</button>
+          <button type="submit" id="booking-submit" class="primary">Save to calendar</button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>

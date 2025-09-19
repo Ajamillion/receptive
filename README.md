@@ -88,7 +88,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 
   The script builds with Cloud Build and deploys to Cloud Run, automatically injecting the `.env` file as `--set-env-vars`.
 
-- The backend is intentionally tiny (< 200 lines of logic) so contractors can reason about it quickly.
+- The backend stays compact (≈300 lines including plumbing) so contractors can reason about it quickly.
 
 ---
 
@@ -100,9 +100,8 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 - The dashboard:
   - Subscribes to `calls/{CallSid}` in Realtime Database.
   - Streams the transcript and AI card in real time.
-  - Shows an activity log of receptionist actions and bookings with timestamps.
   - Opens a booking modal so the receptionist can confirm name, phone, time, and notes.
-  - Calls the backend `POST /bookings` endpoint to create the Google Calendar event and mirrors the record into Firebase; if no backend is configured it falls back to Firebase-only logging.
+  - Calls the backend `POST /bookings` endpoint to create the Google Calendar event and mirrors the record into Firebase.
   - Accepts `?call=<CallSid>` in the URL to lock onto a specific conversation, otherwise follows the newest call.
   - Runs a built-in simulated call demo if the Firebase config is left blank so you can show the UI without wiring any backends.
 
