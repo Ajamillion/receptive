@@ -19,6 +19,7 @@ const callIdentifierEl = document.getElementById("call-identifier");
 const transcriptEl = document.getElementById("transcript");
 const summaryEl = document.getElementById("ai-summary");
 const actionsEl = document.getElementById("ai-actions");
+const callListEl = document.getElementById("call-list");
 const activityListEl = document.getElementById("activity-list");
 const bookingDetailsEl = document.getElementById("booking-details");
 const bookingStatusEl = document.getElementById("booking-status");
@@ -32,6 +33,7 @@ const bookingDurationInput = document.getElementById("booking-duration");
 const bookingNotesInput = document.getElementById("booking-notes");
 const bookingCancelButton = document.getElementById("booking-cancel");
 const bookingSubmitButton = document.getElementById("booking-submit");
+const followLatestButton = document.getElementById("follow-latest");
 
 const state = {
   callId: null,
@@ -45,6 +47,10 @@ const state = {
   followUnsub: null,
   demoTimers: [],
   demoMode: !hasFirebaseConfig,
+  callsData: {},
+  callSummaries: [],
+  latestCallId: null,
+  followMode: hasFirebaseConfig ? "latest" : "manual",
 };
 
 function setStatus(text, notice) {
@@ -153,6 +159,26 @@ function updateBookButton() {
   bookButton.disabled = !ready;
 }
 
+function updateFollowButton() {
+  if (!followLatestButton) {
+    return;
+  }
+
+  if (!hasFirebaseConfig || state.demoMode) {
+    followLatestButton.disabled = true;
+    followLatestButton.textContent = "Follow live call";
+    return;
+  }
+
+  if (state.followMode === "latest") {
+    followLatestButton.disabled = true;
+    followLatestButton.textContent = "Following live call";
+  } else {
+    followLatestButton.disabled = !state.latestCallId;
+    followLatestButton.textContent = "Follow live call";
+  }
+}
+
 function parseDate(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -170,6 +196,179 @@ function formatDateRange(startIso, endIso) {
     return `${startLabel} – ${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   }
   return `${startLabel} → ${end.toLocaleString([], baseOptions)}`;
+}
+
+function formatDurationSeconds(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  if (seconds < 90) {
+    return `${Math.max(1, Math.round(seconds))} sec`;
+  }
+  const minutes = seconds / 60;
+  if (minutes < 90) {
+    const value = minutes < 10 ? Math.round(minutes * 10) / 10 : Math.round(minutes);
+    return `${value} min`;
+  }
+  const hours = minutes / 60;
+  const value = hours < 10 ? Math.round(hours * 10) / 10 : Math.round(hours);
+  const suffix = Math.abs(value - 1) < 0.01 ? "hr" : "hrs";
+  return `${value} ${suffix}`;
+}
+
+function buildCallSummary(id, call) {
+  const data = call && typeof call === "object" ? call : {};
+  const metadata = data.metadata && typeof data.metadata === "object" ? data.metadata : {};
+  const callerDisplay = formatCallerDisplay(metadata);
+  const caller = callerDisplay === "—" ? "Unknown caller" : callerDisplay;
+  const startedAt = typeof data.startedAt === "string" ? data.startedAt : typeof data.connectedAt === "string"
+    ? data.connectedAt
+    : typeof data.createdAt === "string"
+    ? data.createdAt
+    : null;
+  const endedAt = typeof data.endedAt === "string" ? data.endedAt : null;
+  const updatedAt = typeof data.updatedAt === "string" ? data.updatedAt : null;
+  const rawStatus = typeof data.status === "string" && data.status.trim() ? data.status : endedAt ? "completed" : "";
+  const statusKey = rawStatus || (endedAt ? "completed" : "");
+  const statusLabel = formatStatus(statusKey);
+  const normalizedStatus = statusKey.toLowerCase();
+  let statusTone = "";
+  if (normalizedStatus === "completed") {
+    statusTone = "success";
+  } else if (normalizedStatus === "paused" || normalizedStatus === "guard_paused") {
+    statusTone = "danger";
+  } else if (normalizedStatus === "listening" || normalizedStatus === "connected" || (!normalizedStatus && !endedAt)) {
+    statusTone = "live";
+  }
+
+  const startDate = parseDate(startedAt);
+  const endDate = parseDate(endedAt);
+  const updatedDate = parseDate(updatedAt);
+  const referenceDate = endDate || startDate || updatedDate;
+
+  let durationLabel = "";
+  if (startDate) {
+    const compareDate = endDate || new Date();
+    const seconds = (compareDate.getTime() - startDate.getTime()) / 1000;
+    durationLabel = formatDurationSeconds(seconds);
+  }
+
+  const metaParts = [];
+  if (statusLabel) {
+    metaParts.push(statusLabel);
+  }
+  if (durationLabel) {
+    metaParts.push(durationLabel);
+  }
+  let metaLabel = metaParts.join(" · ");
+
+  let timeLabel = "";
+  const timeSource = endedAt || startedAt || updatedAt;
+  if (timeSource) {
+    const timeText = formatActivityTime(timeSource);
+    if (timeText) {
+      const prefix = endedAt ? "Ended" : startedAt ? "Started" : "Updated";
+      timeLabel = `${prefix} ${timeText}`;
+    }
+  }
+
+  if (!metaLabel && timeLabel) {
+    metaLabel = timeLabel;
+    timeLabel = "";
+  }
+
+  return {
+    id,
+    caller,
+    statusLabel,
+    statusTone,
+    metaLabel,
+    timeLabel,
+    sortKey: referenceDate ? referenceDate.getTime() : 0,
+  };
+}
+
+function summarizeCalls(data) {
+  if (!data || typeof data !== "object") {
+    return [];
+  }
+  const entries = Object.entries(data)
+    .filter(([, value]) => value && typeof value === "object")
+    .map(([id, value]) => buildCallSummary(id, value));
+  return entries.sort((a, b) => b.sortKey - a.sortKey).slice(0, 20);
+}
+
+function renderCallList(entries) {
+  if (!callListEl) {
+    return;
+  }
+
+  callListEl.innerHTML = "";
+  const list = Array.isArray(entries) ? entries : [];
+  state.callSummaries = list.map((entry) => ({
+    id: entry.id,
+    caller: entry.caller || "Unknown caller",
+    statusLabel: entry.statusLabel || "",
+    statusTone: entry.statusTone || "",
+    metaLabel: entry.metaLabel || "",
+    timeLabel: entry.timeLabel || "",
+    sortKey: entry.sortKey || 0,
+  }));
+
+  if (!state.callSummaries.length) {
+    const placeholder = document.createElement("li");
+    placeholder.className = "placeholder";
+    placeholder.textContent = "Waiting for calls…";
+    callListEl.appendChild(placeholder);
+    return;
+  }
+
+  state.callSummaries.forEach((entry) => {
+    const item = document.createElement("li");
+    item.className = "call-item";
+    item.dataset.active = entry.id === state.callId ? "true" : "false";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.callId = entry.id;
+
+    const header = document.createElement("div");
+    header.className = "call-item-header";
+
+    const name = document.createElement("span");
+    name.className = "call-item-name";
+    name.textContent = entry.caller || "Unknown caller";
+    header.appendChild(name);
+
+    if (entry.statusLabel) {
+      const status = document.createElement("span");
+      status.className = "call-item-status";
+      if (entry.statusTone) {
+        status.dataset.tone = entry.statusTone;
+      }
+      status.textContent = entry.statusLabel;
+      header.appendChild(status);
+    }
+
+    button.appendChild(header);
+
+    if (entry.metaLabel) {
+      const meta = document.createElement("span");
+      meta.className = "call-item-meta";
+      meta.textContent = entry.metaLabel;
+      button.appendChild(meta);
+    }
+
+    if (entry.timeLabel) {
+      const time = document.createElement("span");
+      time.className = "call-item-time";
+      time.textContent = entry.timeLabel;
+      button.appendChild(time);
+    }
+
+    item.appendChild(button);
+    callListEl.appendChild(item);
+  });
 }
 
 function renderTranscript(data) {
@@ -438,6 +637,7 @@ function attachCall(callSid) {
   detachCallListener();
   state.callId = callSid;
   state.metadata = null;
+  renderCallList(state.callSummaries);
   setStatus("Connecting…");
   setBookingStatus("");
   renderTranscript(null);
@@ -446,6 +646,7 @@ function attachCall(callSid) {
   renderBooking(null);
   renderCallDetails(null);
   updateBookButton();
+  updateFollowButton();
 
   const ref = db.ref(`calls/${callSid}`);
   const handler = (snapshot) => {
@@ -471,25 +672,29 @@ function followLatestCall() {
   const ref = db.ref("calls").limitToLast(20);
   const handler = (snapshot) => {
     const calls = snapshot.val();
-    if (!calls || typeof calls !== "object") {
-      return;
-    }
-    let latestId = null;
-    let latestTime = -Infinity;
-    Object.entries(calls).forEach(([id, call]) => {
-      const timestamp = Date.parse(call.startedAt || call.connectedAt || call.createdAt || call.updatedAt || 0);
-      if (!Number.isNaN(timestamp) && timestamp >= latestTime) {
-        latestTime = timestamp;
-        latestId = id;
+    state.callsData = calls && typeof calls === "object" ? calls : {};
+    const summaries = summarizeCalls(state.callsData);
+    state.latestCallId = summaries.length ? summaries[0].id : null;
+    renderCallList(summaries);
+
+    if (state.followMode === "latest") {
+      if (state.latestCallId && state.latestCallId !== state.callId) {
+        attachCall(state.latestCallId);
+      } else if (!state.latestCallId) {
+        detachCallListener();
+        state.callId = null;
+        state.metadata = null;
+        renderCallDetails(null);
+        renderTranscript(null);
+        renderAi(null);
+        renderActivity(null);
+        renderBooking(null);
+        setBookingStatus("");
+        setStatus("Waiting for a call…");
+        updateBookButton();
       }
-    });
-    if (!latestId) {
-      const keys = Object.keys(calls);
-      latestId = keys[keys.length - 1];
     }
-    if (latestId && latestId !== state.callId) {
-      attachCall(latestId);
-    }
+    updateFollowButton();
   };
   ref.on("value", handler);
   state.followUnsub = () => ref.off("value", handler);
@@ -616,18 +821,33 @@ function clearDemoTimers() {
 function runDemo() {
   state.callId = "demo-call";
   state.demoMode = true;
+  state.followMode = "manual";
   updateBookButton();
-  setStatus("Demo call connected");
-  setBookingStatus("Demo mode: add Firebase config to go live.", "info");
-  renderTranscript({ final: "", partial: "" });
-  renderAi(null);
-  renderCallDetails({
+  const now = new Date();
+  const start = new Date(now.getTime() - 5 * 60 * 1000);
+  const demoMetadata = {
     callerName: "Jamie Patel",
     callerNumber: "+1 555 010 2000",
     forwardedTo: "+1 555 777 1988",
     location: "Seattle, WA",
     notes: "Demo: water heater not working",
-  });
+  };
+  state.callsData = {
+    "demo-call": {
+      metadata: demoMetadata,
+      status: "completed",
+      startedAt: start.toISOString(),
+      endedAt: now.toISOString(),
+    },
+  };
+  state.latestCallId = "demo-call";
+  renderCallList(summarizeCalls(state.callsData));
+  updateFollowButton();
+  setStatus("Demo call connected");
+  setBookingStatus("Demo mode: add Firebase config to go live.", "info");
+  renderTranscript({ final: "", partial: "" });
+  renderAi(null);
+  renderCallDetails(demoMetadata);
   renderActivity(null);
 
   const transcriptSteps = [
@@ -723,15 +943,53 @@ bookingCancelButton.addEventListener("click", () => bookingDialog.close());
 bookingForm.addEventListener("submit", submitBooking);
 window.addEventListener("beforeunload", clearDemoTimers);
 
+if (callListEl) {
+  callListEl.addEventListener("click", (event) => {
+    const target = event.target.closest("button[data-call-id]");
+    if (!target) {
+      return;
+    }
+    const callSid = target.dataset.callId;
+    if (!callSid) {
+      return;
+    }
+    if (hasFirebaseConfig) {
+      state.followMode = "manual";
+    }
+    if (callSid !== state.callId) {
+      attachCall(callSid);
+    } else {
+      renderCallList(state.callSummaries);
+    }
+    updateFollowButton();
+  });
+}
+
+if (followLatestButton) {
+  followLatestButton.addEventListener("click", () => {
+    if (!hasFirebaseConfig || state.followMode === "latest") {
+      return;
+    }
+    state.followMode = "latest";
+    updateFollowButton();
+    if (state.latestCallId) {
+      attachCall(state.latestCallId);
+    }
+  });
+}
+
 renderCallDetails(null);
 updateBookButton();
+updateFollowButton();
 
 if (hasFirebaseConfig) {
   const params = new URLSearchParams(window.location.search);
   const callParam = params.get("call");
   if (callParam) {
+    state.followMode = "manual";
     attachCall(callParam);
   } else {
+    state.followMode = "latest";
     followLatestCall();
   }
 } else {

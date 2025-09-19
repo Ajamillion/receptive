@@ -103,6 +103,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 - Set `window.BACKEND_BASE_URL` in `index.html` to point at the Cloud Run service (e.g. `https://your-service.a.run.app`).
 - The dashboard:
   - Subscribes to `calls/{CallSid}` in Realtime Database.
+  - Lists recent calls with caller names/status so you can jump between a live call and prior conversations, or return to following the newest call.
   - Shows caller identity and the forwarded leg in the header using the metadata the backend streams with each Twilio call.
   - Streams the transcript and AI card in real time.
   - Displays an activity timeline sourced from `calls/{CallSid}/activity` (call lifecycle, AI summary, booking outcomes).
