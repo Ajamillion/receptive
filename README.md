@@ -59,6 +59,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
   - `GET /healthz` for liveness checks.
   - `WS /audiostream` that accepts Twilio Stream frames, converts μ-law → 16 kHz PCM, feeds Picovoice Cheetah, and forwards transcript + Gemini cards to Firebase.
   - `POST /bookings` that takes the receptionist’s booking form submission, creates a Google Calendar event, and writes the result back to Firebase.
+  - Sanitized activity logging (`calls/{CallSid}/activity`) covering call start/completion, first AI summary, booking results, and free-tier guard events so the dashboard timeline stays up to date.
 - Environment variables (copy [`backend/.env.example`](backend/.env.example)):
 
   | Key | Purpose |
@@ -100,6 +101,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 - The dashboard:
   - Subscribes to `calls/{CallSid}` in Realtime Database.
   - Streams the transcript and AI card in real time.
+  - Displays an activity timeline sourced from `calls/{CallSid}/activity` (call lifecycle, AI summary, booking outcomes).
   - Opens a booking modal so the receptionist can confirm name, phone, time, and notes.
   - Calls the backend `POST /bookings` endpoint to create the Google Calendar event and mirrors the record into Firebase.
   - Accepts `?call=<CallSid>` in the URL to lock onto a specific conversation, otherwise follows the newest call.

@@ -64,6 +64,28 @@ async def firebase_patch(path: str, payload: Dict) -> None:
         LOGGER.warning("Firebase PATCH %s failed: %s", path, exc)
 
 
+async def firebase_post(path: str, payload: Dict[str, object]) -> Optional[str]:
+    url = f"{FIREBASE_URL}/{path}.json"
+    try:
+        response = await HTTP.post(url, json=payload, params=FIREBASE_PARAMS)
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict):
+            return str(data.get("name")) if data.get("name") else None
+    except httpx.HTTPError as exc:
+        LOGGER.warning("Firebase POST %s failed: %s", path, exc)
+    return None
+
+
+async def log_activity(
+    call_sid: str, kind: str, message: str, extra: Optional[Dict[str, object]] = None
+) -> None:
+    payload: Dict[str, object] = {"type": kind, "message": message, "at": iso_now()}
+    if extra:
+        payload.update(extra)
+    await firebase_post(f"calls/{call_sid}/activity", payload)
+
+
 genai.configure(api_key=GEMINI_KEY)
 MODEL = genai.GenerativeModel("gemini-1.5-flash")
 PROMPT = (
@@ -240,16 +262,27 @@ async def twilio_stream(websocket: WebSocket) -> None:
                 info = event.get("start", {})
                 stream_sid = info.get("streamSid") or "stream"
                 call_sid = info.get("callSid") or stream_sid
-                session = {"call": call_sid, "stream": stream_sid, "started": time.time(), "final": "", "partial": "", "card": "", "card_at": 0.0}
+                session = {
+                    "call": call_sid,
+                    "stream": stream_sid,
+                    "started": time.time(),
+                    "final": "",
+                    "partial": "",
+                    "card": "",
+                    "card_at": 0.0,
+                    "card_logged": False,
+                }
                 await firebase_patch(
                     f"calls/{call_sid}",
                     {"status": "connected", "streamSid": stream_sid, "startedAt": iso_now()},
                 )
+                await log_activity(call_sid, "call_started", "Call connected")
                 continue
             if not session:
                 continue
             if FREE_GUARD and (time.time() - session["started"]) / 60.0 > FREE_MINUTES:
                 await firebase_patch(f"calls/{session['call']}", {"status": "paused", "notice": "Free tier budget exceeded"})
+                await log_activity(session["call"], "guard_paused", "Free tier budget exceeded; stream closed")
                 await websocket.close()
                 break
             if kind == "media":
@@ -270,6 +303,14 @@ async def twilio_stream(websocket: WebSocket) -> None:
                             await firebase_patch(f"calls/{session['call']}/ai", card)
                             session["card"] = combined
                             session["card_at"] = time.time()
+                            if not session["card_logged"] and card.get("summary"):
+                                await log_activity(
+                                    session["call"],
+                                    "ai_summary",
+                                    card.get("summary", "AI update"),
+                                    {"details": f"Sentiment {card.get('sentiment', 'neutral')} · Urgency {card.get('urgency', 'medium')}"},
+                                )
+                                session["card_logged"] = True
                 continue
             if kind == "stop":
                 if session["partial"]:
@@ -279,6 +320,13 @@ async def twilio_stream(websocket: WebSocket) -> None:
                 if remaining:
                     session["final"] = f"{session['final']} {remaining}".strip()
                 await push_transcript(session, "completed", {"endedAt": iso_now()})
+                duration = max(0, time.time() - session["started"])
+                await log_activity(
+                    session["call"],
+                    "call_completed",
+                    "Call ended",
+                    {"details": f"Duration {duration/60:.1f} min"},
+                )
                 break
     except WebSocketDisconnect:
         LOGGER.info("WebSocket disconnected")
@@ -289,12 +337,14 @@ async def twilio_stream(websocket: WebSocket) -> None:
 @app.post("/bookings")
 async def create_booking(request: BookingRequest) -> Dict:
     if not CALENDAR_ID:
+        await log_activity(request.call_sid, "booking_failed", "Calendar integration is not configured")
         raise HTTPException(status_code=503, detail="Calendar integration is not configured")
     if request.duration_minutes <= 0:
         raise HTTPException(status_code=400, detail="durationMinutes must be positive")
     try:
         event = await create_event(request)
     except RuntimeError as exc:
+        await log_activity(request.call_sid, "booking_failed", str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     start_dt = request.start_iso if request.start_iso.tzinfo else request.start_iso.replace(tzinfo=timezone.utc)
     end_dt = start_dt + timedelta(minutes=request.duration_minutes)
@@ -312,6 +362,15 @@ async def create_booking(request: BookingRequest) -> Dict:
         "createdAt": iso_now(),
     }
     await firebase_patch(f"calls/{request.call_sid}", {"booking": {k: v for k, v in booking.items() if v}})
+    await log_activity(
+        request.call_sid,
+        "booking_created",
+        f"Booked {(booking.get('summary') or 'appointment').strip()}",
+        {
+            "details": f"Start {start}",
+            "data": {"start": start, "end": end, "eventId": booking.get("eventId")},
+        },
+    )
     return {
         "callSid": request.call_sid,
         "event": {"id": event.get("id"), "htmlLink": event.get("htmlLink"), "start": start, "end": end},

@@ -13,6 +13,7 @@ const statusEl = document.getElementById("call-status");
 const transcriptEl = document.getElementById("transcript");
 const summaryEl = document.getElementById("ai-summary");
 const actionsEl = document.getElementById("ai-actions");
+const activityListEl = document.getElementById("activity-list");
 const bookingDetailsEl = document.getElementById("booking-details");
 const bookingStatusEl = document.getElementById("booking-status");
 const bookButton = document.getElementById("book-button");
@@ -31,6 +32,7 @@ const state = {
   transcript: { final: "", partial: "" },
   ai: null,
   booking: null,
+  activity: [],
   bookingInFlight: false,
   callUnsub: null,
   followUnsub: null,
@@ -147,6 +149,107 @@ function renderAi(card) {
   updateBookButton();
 }
 
+function formatActivityTime(value) {
+  const date = parseDate(value);
+  if (!date) return "";
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  const options = sameDay
+    ? { hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+  return date.toLocaleString([], options);
+}
+
+function renderActivity(activity) {
+  state.activity = [];
+  activityListEl.innerHTML = "";
+
+  if (!activity || typeof activity !== "object") {
+    const placeholder = document.createElement("li");
+    placeholder.className = "placeholder";
+    placeholder.textContent = "No activity yet.";
+    activityListEl.appendChild(placeholder);
+    activityListEl.classList.add("is-empty");
+    return;
+  }
+
+  const entries = Object.values(activity)
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => {
+      const rawAt = entry.at || entry.timestamp || null;
+      const at = rawAt && typeof rawAt !== "string" ? String(rawAt) : rawAt;
+      const messageValue = entry.message;
+      const detailsValue = entry.details;
+      return {
+        type: entry.type || "note",
+        message:
+          typeof messageValue === "string"
+            ? messageValue
+            : messageValue != null
+            ? String(messageValue)
+            : "Update",
+        at,
+        details:
+          typeof detailsValue === "string"
+            ? detailsValue
+            : detailsValue != null
+            ? String(detailsValue)
+            : null,
+      };
+    })
+    .sort((a, b) => {
+      const aTime = parseDate(a.at)?.getTime() ?? 0;
+      const bTime = parseDate(b.at)?.getTime() ?? 0;
+      return aTime - bTime;
+    });
+
+  if (!entries.length) {
+    const placeholder = document.createElement("li");
+    placeholder.className = "placeholder";
+    placeholder.textContent = "No activity yet.";
+    activityListEl.appendChild(placeholder);
+    activityListEl.classList.add("is-empty");
+    return;
+  }
+
+  activityListEl.classList.remove("is-empty");
+  entries.forEach((entry) => {
+    const item = document.createElement("li");
+    item.className = "activity-item";
+    item.dataset.type = entry.type;
+
+    const header = document.createElement("div");
+    header.className = "activity-header";
+
+    const message = document.createElement("span");
+    message.className = "activity-message";
+    message.textContent = entry.message;
+    header.appendChild(message);
+
+    const label = formatActivityTime(entry.at);
+    if (label) {
+      const timeEl = document.createElement("time");
+      timeEl.className = "activity-time";
+      timeEl.dateTime = entry.at || "";
+      timeEl.textContent = label;
+      header.appendChild(timeEl);
+    }
+
+    item.appendChild(header);
+
+    if (entry.details) {
+      const details = document.createElement("p");
+      details.className = "activity-details";
+      details.textContent = entry.details;
+      item.appendChild(details);
+    }
+
+    activityListEl.appendChild(item);
+  });
+
+  state.activity = entries;
+}
+
 function renderBooking(booking) {
   state.booking = booking || null;
   bookingDetailsEl.innerHTML = "";
@@ -239,6 +342,7 @@ function attachCall(callSid) {
   setBookingStatus("");
   renderTranscript(null);
   renderAi(null);
+  renderActivity(null);
   renderBooking(null);
   updateBookButton();
 
@@ -248,6 +352,7 @@ function attachCall(callSid) {
     setStatus(formatStatus(data.status));
     renderTranscript(data.transcript || null);
     renderAi(data.ai || null);
+    renderActivity(data.activity || null);
     renderBooking(data.booking || null);
   };
   ref.on("value", handler);
@@ -413,6 +518,7 @@ function runDemo() {
   setBookingStatus("Demo mode: add Firebase config to go live.", "info");
   renderTranscript({ final: "", partial: "" });
   renderAi(null);
+  renderActivity(null);
 
   const transcriptSteps = [
     "Customer: Hi, I'm calling about a water heater that isn't working.",
@@ -439,6 +545,20 @@ function runDemo() {
   ];
 
   const finalLines = [];
+  const demoActivity = {};
+
+  const addDemoActivity = (entry) => {
+    const key = `demo-${Object.keys(demoActivity).length}`;
+    demoActivity[key] = entry;
+    renderActivity(demoActivity);
+  };
+
+  addDemoActivity({
+    type: "call_started",
+    message: "Call connected",
+    at: new Date().toISOString(),
+  });
+
   function advance(step) {
     if (step >= transcriptSteps.length) {
       const start = new Date();
@@ -452,6 +572,18 @@ function runDemo() {
         notes: "Demo mode placeholder",
         htmlLink: "https://calendar.google.com",
       });
+      addDemoActivity({
+        type: "booking_created",
+        message: "Booked demo appointment",
+        details: formatDateRange(start.toISOString(), end.toISOString()),
+        at: new Date().toISOString(),
+      });
+      addDemoActivity({
+        type: "call_completed",
+        message: "Call ended",
+        details: "Duration 5.0 min",
+        at: new Date(Date.now() + 1000).toISOString(),
+      });
       return;
     }
 
@@ -459,6 +591,15 @@ function runDemo() {
     renderTranscript({ final: finalLines.join("\n"), partial: "" });
     const cardIndex = step < 3 ? 0 : 1;
     renderAi(aiCards[cardIndex]);
+
+    if (step === 2) {
+      addDemoActivity({
+        type: "ai_summary",
+        message: aiCards[0].summary,
+        details: "Sentiment neutral · Urgency high",
+        at: new Date(Date.now() + 500).toISOString(),
+      });
+    }
 
     const timer = setTimeout(() => advance(step + 1), 2000);
     state.demoTimers.push(timer);
