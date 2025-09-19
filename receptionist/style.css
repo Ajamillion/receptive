@@ -55,6 +55,10 @@ h1 {
   color: var(--muted);
 }
 
+.status[data-tone="notice"] {
+  color: var(--accent);
+}
+
 .layout {
   flex: 1;
   display: grid;

@@ -58,6 +58,8 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 - [`backend/main.py`](backend/main.py) exposes:
   - `GET /healthz` for liveness checks.
   - `WS /audiostream` that accepts Twilio Stream frames, converts μ-law → 16 kHz PCM, feeds Picovoice Cheetah, and forwards transcript + Gemini cards to Firebase.
+    - When the stream ends the service flushes the remaining audio and asks Gemini for one final summary so the last card matches the full transcript.
+    - Gemini hiccups are caught and logged—if the model call fails the stream keeps running and the UI receives a friendly placeholder instead of an exception.
   - `POST /bookings` that takes the receptionist’s booking form submission, creates a Google Calendar event, and writes the result back to Firebase.
   - Sanitized activity logging (`calls/{CallSid}/activity`) covering call start/completion, first AI summary, booking results, and free-tier guard events so the dashboard timeline stays up to date.
 - Environment variables (copy [`backend/.env.example`](backend/.env.example)):
@@ -104,6 +106,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
   - Displays an activity timeline sourced from `calls/{CallSid}/activity` (call lifecycle, AI summary, booking outcomes).
   - Opens a booking modal so the receptionist can confirm name, phone, time, and notes.
   - Calls the backend `POST /bookings` endpoint to create the Google Calendar event and mirrors the record into Firebase.
+  - Highlights backend notices (e.g. free-tier guard) directly in the status header so the receptionist knows why a stream paused.
   - Accepts `?call=<CallSid>` in the URL to lock onto a specific conversation, otherwise follows the newest call.
   - Runs a built-in simulated call demo if the Firebase config is left blank so you can show the UI without wiring any backends.
 

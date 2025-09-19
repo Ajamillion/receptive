@@ -93,6 +93,13 @@ PROMPT = (
     "containing summary, sentiment (positive|neutral|negative), urgency (low|medium|high), and action_items (array)."
 )
 
+DEFAULT_CARD = {
+    "summary": "AI summary temporarily unavailable.",
+    "sentiment": "neutral",
+    "urgency": "medium",
+    "action_items": [],
+}
+
 
 async def build_ai_card(transcript: str) -> Optional[Dict]:
     text = transcript.strip()
@@ -100,7 +107,13 @@ async def build_ai_card(transcript: str) -> Optional[Dict]:
         return None
 
     def _invoke() -> Dict:
-        raw = (MODEL.generate_content([PROMPT, text]).text or "").strip()
+        try:
+            response = MODEL.generate_content([PROMPT, text])
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("Gemini request failed: %s", exc)
+            return dict(DEFAULT_CARD)
+
+        raw = (response.text or "").strip()
         if raw.startswith("```"):
             lines = raw.splitlines()
             raw = "\n".join(line for line in lines[1:] if not line.startswith("```"))
@@ -320,6 +333,23 @@ async def twilio_stream(websocket: WebSocket) -> None:
                 if remaining:
                     session["final"] = f"{session['final']} {remaining}".strip()
                 await push_transcript(session, "completed", {"endedAt": iso_now()})
+                final_text = session["final"].strip()
+                if final_text and (final_text != session["card"] or not session["card_logged"]):
+                    card = await build_ai_card(final_text)
+                    if card:
+                        await firebase_patch(f"calls/{session['call']}/ai", card)
+                        session["card"] = final_text
+                        session["card_at"] = time.time()
+                        if not session["card_logged"] and card.get("summary"):
+                            await log_activity(
+                                session["call"],
+                                "ai_summary",
+                                card.get("summary", "AI update"),
+                                {
+                                    "details": f"Sentiment {card.get('sentiment', 'neutral')} · Urgency {card.get('urgency', 'medium')}",
+                                },
+                            )
+                            session["card_logged"] = True
                 duration = max(0, time.time() - session["started"])
                 await log_activity(
                     session["call"],

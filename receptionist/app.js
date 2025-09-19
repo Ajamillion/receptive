@@ -40,8 +40,13 @@ const state = {
   demoMode: !hasFirebaseConfig,
 };
 
-function setStatus(text) {
-  statusEl.textContent = text;
+function setStatus(text, notice) {
+  const base = text || "Connected";
+  const cleanNotice =
+    typeof notice === "string" && notice.trim() ? notice.trim() : null;
+  statusEl.textContent = cleanNotice ? `${base} — ${cleanNotice}` : base;
+  statusEl.dataset.tone = cleanNotice ? "notice" : "";
+  statusEl.title = cleanNotice || "";
 }
 
 function setBookingStatus(message, tone = "info") {
@@ -349,7 +354,7 @@ function attachCall(callSid) {
   const ref = db.ref(`calls/${callSid}`);
   const handler = (snapshot) => {
     const data = snapshot.val() || {};
-    setStatus(formatStatus(data.status));
+    setStatus(formatStatus(data.status), data.notice);
     renderTranscript(data.transcript || null);
     renderAi(data.ai || null);
     renderActivity(data.activity || null);
