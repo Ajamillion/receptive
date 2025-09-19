@@ -100,6 +100,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 - The dashboard:
   - Subscribes to `calls/{CallSid}` in Realtime Database.
   - Streams the transcript and AI card in real time.
+  - Shows an activity log of receptionist actions and bookings with timestamps.
   - Opens a booking modal so the receptionist can confirm name, phone, time, and notes.
   - Calls the backend `POST /bookings` endpoint to create the Google Calendar event and mirrors the record into Firebase; if no backend is configured it falls back to Firebase-only logging.
   - Accepts `?call=<CallSid>` in the URL to lock onto a specific conversation, otherwise follows the newest call.

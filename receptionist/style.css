@@ -92,6 +92,81 @@ h1 {
   margin: 0.5rem 0 0;
 }
 
+.action-log {
+  max-height: 32vh;
+  overflow-y: auto;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  align-items: start;
+}
+
+.activity-time {
+  font-size: 0.8rem;
+  color: rgba(148, 163, 184, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.activity-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.activity-title {
+  font-weight: 600;
+}
+
+.activity-badge {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #bae6fd;
+}
+
+.activity-detail {
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.9);
+  line-height: 1.4;
+}
+
+.detail-label {
+  font-weight: 600;
+  margin-right: 0.35rem;
+  color: rgba(191, 219, 254, 0.95);
+}
+
+.activity-sublist {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
 button {
   background: #38bdf8;
   border: none;

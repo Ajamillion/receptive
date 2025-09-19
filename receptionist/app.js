@@ -15,6 +15,7 @@ const statusEl = document.getElementById("call-status");
 const transcriptEl = document.getElementById("transcript-text");
 const summaryEl = document.getElementById("ai-summary");
 const actionsEl = document.getElementById("ai-actions");
+const actionLogEl = document.getElementById("action-log");
 const bookButton = document.getElementById("book-button");
 const defaultBookText = "Book appointment";
 bookButton.textContent = defaultBookText;
@@ -45,6 +46,7 @@ let latestAiCard = null;
 let bookingInFlight = false;
 let demoBookingUnlocked = false;
 let canBook = false;
+let localActionLog = [];
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -56,6 +58,230 @@ function updateBookButtonState() {
 }
 
 updateBookButtonState();
+
+const MODE_BADGE_LABELS = {
+  backend: "Calendar",
+  firebase: "Firebase",
+  demo: "Demo",
+};
+
+function escapeHtml(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+}
+
+function parseIsoDate(value) {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "string") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+}
+
+function getActionTimestamp(action) {
+  if (!action || typeof action !== "object") {
+    return 0;
+  }
+  const created = parseIsoDate(action.createdAt || action.created_at);
+  if (created) {
+    return created.getTime();
+  }
+  const start = parseIsoDate(action.start || action.startIso || action.start_time);
+  if (start) {
+    return start.getTime();
+  }
+  return 0;
+}
+
+function formatLogTimestamp(value) {
+  const date = parseIsoDate(value);
+  if (!date) {
+    return "—";
+  }
+  const now = new Date();
+  const sameDay = now.toDateString() === date.toDateString();
+  const options = sameDay
+    ? { hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+  return date.toLocaleString([], options);
+}
+
+function formatActionTimeRange(startIso, endIso) {
+  const startDate = parseIsoDate(startIso);
+  if (!startDate) {
+    return "";
+  }
+  const baseOptions = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+  const startLabel = startDate.toLocaleString([], baseOptions);
+  const endDate = parseIsoDate(endIso);
+  if (!endDate) {
+    return startLabel;
+  }
+  if (startDate.toDateString() === endDate.toDateString()) {
+    const endLabel = endDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `${startLabel} – ${endLabel}`;
+  }
+  return `${startLabel} → ${endDate.toLocaleString([], baseOptions)}`;
+}
+
+function formatActionBadge(action) {
+  if (!action || typeof action.mode !== "string") {
+    return "";
+  }
+  const key = action.mode.toLowerCase();
+  if (MODE_BADGE_LABELS[key]) {
+    return MODE_BADGE_LABELS[key];
+  }
+  return action.mode.charAt(0).toUpperCase() + action.mode.slice(1);
+}
+
+function formatActionDescription(action) {
+  if (!action || typeof action !== "object") {
+    return "Action logged";
+  }
+  if (action.type === "book") {
+    let text = "Booked appointment";
+    if (action.customerName) {
+      text += ` for ${action.customerName}`;
+    }
+    const when = formatActionTimeRange(action.start, action.end);
+    if (when) {
+      text += ` – ${when}`;
+    }
+    return text;
+  }
+  if (typeof action.description === "string" && action.description.trim()) {
+    return action.description.trim();
+  }
+  if (typeof action.summary === "string" && action.summary.trim()) {
+    return action.summary.trim();
+  }
+  if (typeof action.notes === "string" && action.notes.trim()) {
+    return action.notes.trim();
+  }
+  if (typeof action.type === "string" && action.type.trim()) {
+    return action.type.trim();
+  }
+  return "Action logged";
+}
+
+function formatActionDetails(action) {
+  if (!action || typeof action !== "object") {
+    return [];
+  }
+  const details = [];
+  if (typeof action.summary === "string" && action.summary.trim()) {
+    details.push({ label: "Summary", value: action.summary.trim() });
+  }
+  if (
+    typeof action.notes === "string" &&
+    action.notes.trim() &&
+    action.notes.trim() !== action.summary?.trim()
+  ) {
+    details.push({ label: "Notes", value: action.notes.trim() });
+  }
+  if (typeof action.customerPhone === "string" && action.customerPhone.trim()) {
+    details.push({ label: "Phone", value: action.customerPhone.trim() });
+  }
+  return details;
+}
+
+function renderActionLog(actions) {
+  if (!actionLogEl) {
+    return;
+  }
+
+  const header = "<h3>Activity</h3>";
+
+  if (!actions || actions.length === 0) {
+    actionLogEl.innerHTML = `${header}<p class="placeholder">No receptionist actions yet.</p>`;
+    return;
+  }
+
+  const sorted = actions
+    .filter((item) => item && typeof item === "object")
+    .sort((a, b) => getActionTimestamp(a) - getActionTimestamp(b));
+
+  const limited = sorted.slice(-20);
+  const itemsHtml = limited
+    .map((action) => {
+      const timestampLabel = formatLogTimestamp(action.createdAt || action.created_at || action.start);
+      const description = formatActionDescription(action);
+      const badge = formatActionBadge(action);
+      const detailsHtml = formatActionDetails(action)
+        .map(
+          ({ label, value }) =>
+            `<p class="activity-detail"><span class="detail-label">${escapeHtml(label)}</span>${escapeHtml(value)}</p>`,
+        )
+        .join("");
+      const actionItems = Array.isArray(action.actionItems)
+        ? action.actionItems
+        : Array.isArray(action.action_items)
+        ? action.action_items
+        : [];
+      const itemsList = actionItems.length
+        ? `<div class="activity-detail"><span class="detail-label">Tasks</span><ul class="activity-sublist">${actionItems
+            .map((item) => `<li>${escapeHtml(item)}</li>`)
+            .join("")}</ul></div>`
+        : "";
+
+      return `
+        <li class="activity-item">
+          <span class="activity-time">${escapeHtml(timestampLabel)}</span>
+          <div class="activity-body">
+            <div class="activity-header">
+              <span class="activity-title">${escapeHtml(description)}</span>
+              ${badge ? `<span class="activity-badge">${escapeHtml(badge)}</span>` : ""}
+            </div>
+            ${detailsHtml}${itemsList}
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+
+  actionLogEl.innerHTML = `${header}<ul class="activity-list">${itemsHtml}</ul>`;
+}
+
+function resetLocalActionLog() {
+  localActionLog = [];
+  renderActionLog([]);
+}
+
+function recordLocalAction(action) {
+  if (db) {
+    return;
+  }
+  const entry = { ...action };
+  entry.createdAt = entry.createdAt || new Date().toISOString();
+  localActionLog = [...localActionLog, entry].slice(-20);
+  renderActionLog(localActionLog);
+}
+
+renderActionLog([]);
 
 function refreshBookingAvailability() {
   const hasCard = Boolean(latestAiCard && latestAiCard.summary);
@@ -259,6 +485,15 @@ async function handleBookingSubmit(event) {
     const result = await createBooking(payload);
     const event = result.event || {};
     const eventStart = event.start ? new Date(event.start) : startDate;
+    const eventStartIso = typeof event.start === "string" ? event.start : payload.startIso;
+    let eventEndIso = typeof event.end === "string" ? event.end : null;
+    if (!eventEndIso && eventStartIso) {
+      const fallbackEnd = new Date(eventStartIso);
+      if (!Number.isNaN(fallbackEnd.getTime())) {
+        fallbackEnd.setMinutes(fallbackEnd.getMinutes() + durationMinutes);
+        eventEndIso = fallbackEnd.toISOString();
+      }
+    }
     const link = event.htmlLink;
 
     if (link) {
@@ -272,6 +507,20 @@ async function handleBookingSubmit(event) {
       setStatus(`Demo call ${currentCallSid}: booking logged for ${displayTime}`);
     } else {
       setStatus(`Call ${currentCallSid}: appointment booked for ${displayTime}`);
+    }
+
+    if (!db) {
+      recordLocalAction({
+        type: "book",
+        start: eventStartIso,
+        end: eventEndIso,
+        customerName: payload.customerName,
+        customerPhone: payload.customerPhone,
+        notes: payload.notes,
+        summary: payload.summary,
+        actionItems: payload.actionItems,
+        mode: result.mode,
+      });
     }
 
     const bookedLabel = result.mode === "demo" ? "Booked! (demo)" : "Booked!";
@@ -339,34 +588,6 @@ async function createBooking(payload) {
     }
 
     const data = await response.json();
-
-    if (db && data?.event) {
-      const event = data.event;
-      const nowIso = new Date().toISOString();
-      const actionRecord = {
-        type: "book",
-        createdAt: nowIso,
-        eventId: event.id || null,
-        start: event.start || payload.startIso,
-        end: event.end || null,
-        customerName: payload.customerName,
-        customerPhone: payload.customerPhone,
-        notes: payload.notes,
-        summary: payload.summary,
-        actionItems: payload.actionItems,
-        mode: "backend",
-      };
-      const cleanedAction = Object.fromEntries(
-        Object.entries(actionRecord).filter(([, value]) =>
-          Array.isArray(value) ? value.length : Boolean(value)
-        )
-      );
-      try {
-        await db.ref(`calls/${payload.callSid}/actions`).push(cleanedAction);
-      } catch (error) {
-        console.error("Failed to log booking action in Firebase", error);
-      }
-    }
 
     return { ...data, mode: "backend" };
   }
@@ -474,6 +695,7 @@ function watchCall(callSid) {
     currentCallSid = null;
     latestAiCard = null;
     refreshBookingAvailability();
+    renderActionLog([]);
     return;
   }
 
@@ -492,6 +714,7 @@ function watchCall(callSid) {
   bookingInFlight = false;
   bookButton.textContent = defaultBookText;
   refreshBookingAvailability();
+  renderActionLog([]);
 
   setStatus(`Monitoring call ${callSid}`);
 
@@ -515,6 +738,17 @@ function watchCall(callSid) {
   const aiRef = db.ref(`calls/${callSid}/ai`);
   listen(aiRef, "value", (snapshot) => {
     renderAi(snapshot.val());
+  });
+
+  const actionsRef = db.ref(`calls/${callSid}/actions`).limitToLast(50);
+  listen(actionsRef, "value", (snapshot) => {
+    const data = snapshot.val();
+    if (!data) {
+      renderActionLog([]);
+      return;
+    }
+    const entries = Object.values(data).filter((item) => item && typeof item === "object");
+    renderActionLog(entries);
   });
 }
 
@@ -558,6 +792,7 @@ function startDemo() {
   demoBookingUnlocked = false;
   bookButton.textContent = defaultBookText;
   refreshBookingAvailability();
+  resetLocalActionLog();
 
   const transcript = { final: "", partial: "" };
   const setPartial = (text) => {
