@@ -91,6 +91,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
   - Streams the transcript and AI card in real time.
   - Provides a one-click **Book appointment** button that pushes to `calls/{CallSid}/actions` (ready for a Cloud Function that hits Google Calendar).
   - Accepts `?call=<CallSid>` in the URL to lock onto a specific conversation, otherwise follows the newest call.
+  - Runs a built-in simulated call demo if the Firebase config is left blank so you can show the UI without wiring any backends.
 
 ---
 

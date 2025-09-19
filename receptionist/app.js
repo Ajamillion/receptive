@@ -1,10 +1,13 @@
 const config = window.FIREBASE_CONFIG || {};
-if (!config.databaseURL) {
+const hasFirebaseConfig = Boolean(config.apiKey && config.databaseURL);
+
+let db = null;
+if (hasFirebaseConfig) {
+  firebase.initializeApp(config);
+  db = firebase.database();
+} else {
   console.warn("Firebase config missing; the dashboard will run in demo mode.");
 }
-
-firebase.initializeApp(config);
-const db = firebase.database();
 
 const statusEl = document.getElementById("call-status");
 const transcriptEl = document.getElementById("transcript-text");
@@ -14,6 +17,7 @@ const bookButton = document.getElementById("book-button");
 
 let currentCallSid = null;
 let detachListeners = [];
+let demoTimeouts = [];
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -77,6 +81,10 @@ function listen(ref, event, handler) {
 }
 
 function watchCall(callSid) {
+  if (!db) {
+    return;
+  }
+
   if (!callSid) {
     setStatus("Waiting for call…");
     return;
@@ -137,6 +145,11 @@ function watchCall(callSid) {
 }
 
 function bootstrap() {
+  if (!db) {
+    startDemo();
+    return;
+  }
+
   const params = new URLSearchParams(window.location.search);
   const pinnedCall = params.get("call");
   if (pinnedCall) {
@@ -147,6 +160,136 @@ function bootstrap() {
   const callsRef = db.ref("calls");
   listen(callsRef.limitToLast(1), "child_added", (snapshot) => {
     watchCall(snapshot.key);
+  });
+}
+
+function scheduleDemo(delay, fn) {
+  const id = window.setTimeout(fn, delay);
+  demoTimeouts.push(id);
+}
+
+function clearDemoTimers() {
+  demoTimeouts.forEach((id) => window.clearTimeout(id));
+  demoTimeouts = [];
+}
+
+function enableDemoBooking(callSid) {
+  const defaultText = "Book appointment";
+  bookButton.disabled = false;
+  bookButton.textContent = defaultText;
+  bookButton.onclick = () => {
+    bookButton.disabled = true;
+    bookButton.textContent = "Booking…";
+    console.info(`[demo] Logging booking for ${callSid}`);
+    window.setTimeout(() => {
+      bookButton.textContent = "Booked! (demo)";
+      setStatus(`Demo call ${callSid}: booking logged`);
+      window.setTimeout(() => {
+        bookButton.textContent = defaultText;
+        bookButton.disabled = false;
+      }, 1500);
+    }, 900);
+  };
+}
+
+function startDemo() {
+  clearDemoTimers();
+  const callSid = "DEMO-CALL";
+  currentCallSid = callSid;
+
+  const transcript = { final: "", partial: "" };
+  const setPartial = (text) => {
+    transcript.partial = text;
+    renderTranscript(transcript);
+  };
+  const addFinal = (text) => {
+    transcript.final = transcript.final ? `${transcript.final}\n${text}` : text;
+    transcript.partial = "";
+    renderTranscript(transcript);
+  };
+
+  setStatus("Demo mode: waiting for caller…");
+  renderTranscript(null);
+  renderAi(null);
+  actionsEl.innerHTML = "";
+  bookButton.disabled = true;
+  bookButton.textContent = "Book appointment";
+  bookButton.onclick = null;
+
+  scheduleDemo(1000, () => {
+    setStatus(`Demo call ${callSid}: connected`);
+    setPartial("Receptionist: Thank you for calling Redwood HVAC, this is Jamie.");
+  });
+
+  scheduleDemo(3500, () => {
+    addFinal("Receptionist: Thank you for calling Redwood HVAC, this is Jamie.");
+  });
+
+  scheduleDemo(4200, () => {
+    setPartial(
+      "Caller: Hi Jamie, our air conditioner is rattling and the house is still warm."
+    );
+  });
+
+  scheduleDemo(6800, () => {
+    addFinal(
+      "Caller: Hi Jamie, our air conditioner is rattling and the house is still warm."
+    );
+    renderAi({
+      summary:
+        "Caller reports a noisy AC unit that is no longer cooling; receptionist is gathering service details.",
+      sentiment: "neutral",
+      urgency: "high",
+      action_items: [
+        "Confirm service address and system details",
+        "Offer earliest diagnostic appointment",
+      ],
+    });
+  });
+
+  scheduleDemo(8200, () => {
+    setPartial(
+      "Receptionist: I can have a technician there tomorrow at 9 AM—will anyone be home?"
+    );
+  });
+
+  scheduleDemo(10800, () => {
+    addFinal(
+      "Receptionist: I can have a technician there tomorrow at 9 AM—will anyone be home?"
+    );
+  });
+
+  scheduleDemo(11600, () => {
+    setPartial(
+      "Caller: Yes, I'll be home. Please send me a confirmation text once it's booked."
+    );
+  });
+
+  scheduleDemo(14000, () => {
+    addFinal(
+      "Caller: Yes, I'll be home. Please send me a confirmation text once it's booked."
+    );
+    renderAi({
+      summary:
+        "Technician visit scheduled for tomorrow at 9 AM to inspect the AC issue. Customer expects a confirmation text.",
+      sentiment: "positive",
+      urgency: "medium",
+      action_items: [
+        "Book technician for tomorrow 9 AM",
+        "Send confirmation text with arrival window",
+      ],
+    });
+    setStatus(`Demo call ${callSid}: wrap-up`);
+    enableDemoBooking(callSid);
+  });
+
+  scheduleDemo(16000, () => {
+    setStatus(`Demo call ${callSid}: completed`);
+  });
+
+  scheduleDemo(25000, () => {
+    setStatus("Demo mode: resetting…");
+    startDemo();
   });
 }
 
