@@ -27,7 +27,16 @@
         <p class="eyebrow">GV AI co-pilot</p>
         <h1>Live receptionist dashboard</h1>
       </div>
-      <p id="call-status" class="status">Waiting for a call…</p>
+      <div class="call-info">
+        <p id="call-status" class="status">Waiting for a call…</p>
+        <div id="call-meta" class="call-meta" hidden>
+          <p id="call-caller" class="call-meta-line">Caller: —</p>
+          <p id="call-forwarded" class="call-meta-line">Forwarded to: —</p>
+          <p id="call-location" class="call-meta-line" hidden></p>
+          <p id="call-notes" class="call-meta-line" hidden></p>
+          <p id="call-identifier" class="call-meta-line" hidden></p>
+        </div>
+      </div>
     </header>
 
     <main class="layout">

@@ -62,6 +62,7 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
     - Gemini hiccups are caught and logged—if the model call fails the stream keeps running and the UI receives a friendly placeholder instead of an exception.
   - `POST /bookings` that takes the receptionist’s booking form submission, creates a Google Calendar event, and writes the result back to Firebase.
   - Sanitized activity logging (`calls/{CallSid}/activity`) covering call start/completion, first AI summary, booking results, and free-tier guard events so the dashboard timeline stays up to date.
+  - Captures caller metadata (caller number, the forwarding leg, and recognized Twilio custom parameters) and writes it to Firebase so the dashboard instantly shows who is on the line and can pre-fill booking forms.
 - Environment variables (copy [`backend/.env.example`](backend/.env.example)):
 
   | Key | Purpose |
@@ -102,9 +103,10 @@ Twilio forks the live audio to the backend **and** keeps the PSTN leg to the rec
 - Set `window.BACKEND_BASE_URL` in `index.html` to point at the Cloud Run service (e.g. `https://your-service.a.run.app`).
 - The dashboard:
   - Subscribes to `calls/{CallSid}` in Realtime Database.
+  - Shows caller identity and the forwarded leg in the header using the metadata the backend streams with each Twilio call.
   - Streams the transcript and AI card in real time.
   - Displays an activity timeline sourced from `calls/{CallSid}/activity` (call lifecycle, AI summary, booking outcomes).
-  - Opens a booking modal so the receptionist can confirm name, phone, time, and notes.
+  - Opens a booking modal so the receptionist can confirm name, phone, time, and notes—with caller details pre-filled from the metadata when available.
   - Calls the backend `POST /bookings` endpoint to create the Google Calendar event and mirrors the record into Firebase.
   - Highlights backend notices (e.g. free-tier guard) directly in the status header so the receptionist knows why a stream paused.
   - Accepts `?call=<CallSid>` in the URL to lock onto a specific conversation, otherwise follows the newest call.

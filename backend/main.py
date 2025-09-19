@@ -204,6 +204,41 @@ def _clip(text: Optional[str], limit: int) -> Optional[str]:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _clean_meta_value(value: Optional[object], limit: int = 160) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return _clip(text, limit)
+
+
+def extract_call_metadata(info: Dict[str, object]) -> Dict[str, str]:
+    metadata: Dict[str, str] = {}
+    from_number = _clean_meta_value(info.get("from"), 80)
+    if from_number:
+        metadata["callerNumber"] = from_number
+    to_number = _clean_meta_value(info.get("to"), 80)
+    if to_number:
+        metadata["forwardedTo"] = to_number
+    custom = info.get("customParameters")
+    if isinstance(custom, dict):
+        for key, value in custom.items():
+            clean = _clean_meta_value(value)
+            if not clean:
+                continue
+            lowered = key.lower()
+            if lowered in {"caller_name", "customer_name", "name"}:
+                metadata["callerName"] = clean
+            elif lowered in {"caller_phone", "customer_phone", "phone"}:
+                metadata.setdefault("callerNumber", clean)
+            elif lowered in {"location", "address", "city"}:
+                metadata["location"] = clean
+            elif lowered in {"notes", "note"}:
+                metadata["notes"] = clean
+    return metadata
+
+
 async def create_event(request: BookingRequest) -> Dict:
     if not CALENDAR_ID:
         raise RuntimeError("CALENDAR_ID is not configured")
@@ -275,6 +310,7 @@ async def twilio_stream(websocket: WebSocket) -> None:
                 info = event.get("start", {})
                 stream_sid = info.get("streamSid") or "stream"
                 call_sid = info.get("callSid") or stream_sid
+                metadata = extract_call_metadata(info)
                 session = {
                     "call": call_sid,
                     "stream": stream_sid,
@@ -284,12 +320,31 @@ async def twilio_stream(websocket: WebSocket) -> None:
                     "card": "",
                     "card_at": 0.0,
                     "card_logged": False,
+                    "metadata": metadata,
                 }
-                await firebase_patch(
-                    f"calls/{call_sid}",
-                    {"status": "connected", "streamSid": stream_sid, "startedAt": iso_now()},
-                )
-                await log_activity(call_sid, "call_started", "Call connected")
+                payload = {"status": "connected", "streamSid": stream_sid, "startedAt": iso_now()}
+                if metadata:
+                    payload["metadata"] = metadata
+                await firebase_patch(f"calls/{call_sid}", payload)
+                caller_number = metadata.get("callerNumber") if metadata else None
+                caller_name = metadata.get("callerName") if metadata else None
+                if caller_name and caller_number:
+                    message = f"{caller_name} ({caller_number}) connected"
+                elif caller_name:
+                    message = f"{caller_name} connected"
+                elif caller_number:
+                    message = f"Call from {caller_number}"
+                else:
+                    message = "Call connected"
+                extra: Dict[str, object] = {}
+                forwarded = metadata.get("forwardedTo") if metadata else None
+                if forwarded:
+                    extra["details"] = f"Forwarded to {forwarded}"
+                if metadata:
+                    data_payload = {k: v for k, v in metadata.items() if k in {"callerNumber", "forwardedTo", "location"}}
+                    if data_payload:
+                        extra["data"] = data_payload
+                await log_activity(call_sid, "call_started", message, extra or None)
                 continue
             if not session:
                 continue
@@ -351,11 +406,27 @@ async def twilio_stream(websocket: WebSocket) -> None:
                             )
                             session["card_logged"] = True
                 duration = max(0, time.time() - session["started"])
+                meta = session.get("metadata") or {}
+                caller_number = meta.get("callerNumber") if isinstance(meta, dict) else None
+                caller_name = meta.get("callerName") if isinstance(meta, dict) else None
+                if caller_name and caller_number:
+                    completed_msg = f"Call with {caller_name} ({caller_number}) ended"
+                elif caller_name:
+                    completed_msg = f"Call with {caller_name} ended"
+                elif caller_number:
+                    completed_msg = f"Call with {caller_number} ended"
+                else:
+                    completed_msg = "Call ended"
+                extra_payload: Dict[str, object] = {"details": f"Duration {duration/60:.1f} min"}
+                if isinstance(meta, dict):
+                    data_payload = {k: v for k, v in meta.items() if k in {"callerNumber", "forwardedTo", "location"}}
+                    if data_payload:
+                        extra_payload["data"] = data_payload
                 await log_activity(
                     session["call"],
                     "call_completed",
-                    "Call ended",
-                    {"details": f"Duration {duration/60:.1f} min"},
+                    completed_msg,
+                    extra_payload,
                 )
                 break
     except WebSocketDisconnect:

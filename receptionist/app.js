@@ -10,6 +10,12 @@ const db = hasFirebaseConfig ? firebase.database() : null;
 const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
 
 const statusEl = document.getElementById("call-status");
+const callMetaEl = document.getElementById("call-meta");
+const callCallerEl = document.getElementById("call-caller");
+const callForwardedEl = document.getElementById("call-forwarded");
+const callLocationEl = document.getElementById("call-location");
+const callNotesEl = document.getElementById("call-notes");
+const callIdentifierEl = document.getElementById("call-identifier");
 const transcriptEl = document.getElementById("transcript");
 const summaryEl = document.getElementById("ai-summary");
 const actionsEl = document.getElementById("ai-actions");
@@ -32,6 +38,7 @@ const state = {
   transcript: { final: "", partial: "" },
   ai: null,
   booking: null,
+  metadata: null,
   activity: [],
   bookingInFlight: false,
   callUnsub: null,
@@ -52,6 +59,93 @@ function setStatus(text, notice) {
 function setBookingStatus(message, tone = "info") {
   bookingStatusEl.textContent = message || "";
   bookingStatusEl.dataset.tone = message ? tone : "";
+}
+
+function formatCallIdentifier(value) {
+  if (!value) return "";
+  const text = String(value);
+  if (text.length <= 12) return text;
+  return `${text.slice(0, 6)}…${text.slice(-4)}`;
+}
+
+function cleanMetaValue(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function formatCallerDisplay(metadata) {
+  if (!metadata || typeof metadata !== "object") {
+    return "—";
+  }
+  const name = cleanMetaValue(metadata.callerName);
+  const number = cleanMetaValue(metadata.callerNumber);
+  if (name && number) {
+    return `${name} (${number})`;
+  }
+  if (name) {
+    return name;
+  }
+  if (number) {
+    return number;
+  }
+  return "Unknown caller";
+}
+
+function setOptionalMetaLine(element, label, value) {
+  if (!element) return;
+  const clean = cleanMetaValue(value);
+  if (!clean) {
+    element.hidden = true;
+    element.textContent = "";
+    return;
+  }
+  element.hidden = false;
+  element.textContent = `${label}: ${clean}`;
+}
+
+function renderCallDetails(metadata) {
+  state.metadata = metadata && typeof metadata === "object" ? metadata : null;
+  const active = Boolean(state.callId);
+  if (callMetaEl) {
+    callMetaEl.hidden = !active;
+  }
+  if (!active) {
+    if (callCallerEl) callCallerEl.textContent = "Caller: —";
+    if (callForwardedEl) callForwardedEl.textContent = "Forwarded to: —";
+    if (callIdentifierEl) {
+      callIdentifierEl.hidden = true;
+      callIdentifierEl.textContent = "";
+    }
+    if (callLocationEl) {
+      callLocationEl.hidden = true;
+      callLocationEl.textContent = "";
+    }
+    if (callNotesEl) {
+      callNotesEl.hidden = true;
+      callNotesEl.textContent = "";
+    }
+    return;
+  }
+
+  const callerDisplay = formatCallerDisplay(state.metadata);
+  if (callCallerEl) {
+    callCallerEl.textContent = `Caller: ${callerDisplay}`;
+  }
+  if (callForwardedEl) {
+    const forwarded = cleanMetaValue(state.metadata?.forwardedTo);
+    callForwardedEl.textContent = `Forwarded to: ${forwarded || "—"}`;
+  }
+  setOptionalMetaLine(callLocationEl, "Location", state.metadata?.location || null);
+  setOptionalMetaLine(callNotesEl, "Notes", state.metadata?.notes || null);
+  if (callIdentifierEl) {
+    if (state.callId) {
+      callIdentifierEl.hidden = false;
+      callIdentifierEl.textContent = `Call ID: ${formatCallIdentifier(state.callId)}`;
+    } else {
+      callIdentifierEl.hidden = true;
+      callIdentifierEl.textContent = "";
+    }
+  }
 }
 
 function updateBookButton() {
@@ -343,12 +437,14 @@ function attachCall(callSid) {
   }
   detachCallListener();
   state.callId = callSid;
+  state.metadata = null;
   setStatus("Connecting…");
   setBookingStatus("");
   renderTranscript(null);
   renderAi(null);
   renderActivity(null);
   renderBooking(null);
+  renderCallDetails(null);
   updateBookButton();
 
   const ref = db.ref(`calls/${callSid}`);
@@ -359,6 +455,7 @@ function attachCall(callSid) {
     renderAi(data.ai || null);
     renderActivity(data.activity || null);
     renderBooking(data.booking || null);
+    renderCallDetails(data.metadata || null);
   };
   ref.on("value", handler);
   state.callUnsub = () => ref.off("value", handler);
@@ -407,9 +504,10 @@ function openBookingDialog() {
   const defaultStart = state.booking?.start ? parseDate(state.booking.start) : suggestStartTime();
   bookingStartInput.value = defaultStart ? toDatetimeLocal(defaultStart) : "";
   bookingDurationInput.value = state.booking?.durationMinutes || bookingDurationInput.value || "60";
-  bookingNameInput.value = state.booking?.customerName || "";
-  bookingPhoneInput.value = state.booking?.customerPhone || "";
-  bookingNotesInput.value = state.booking?.notes || "";
+  const metadata = state.metadata || {};
+  bookingNameInput.value = state.booking?.customerName || metadata.callerName || "";
+  bookingPhoneInput.value = state.booking?.customerPhone || metadata.callerNumber || "";
+  bookingNotesInput.value = state.booking?.notes || metadata.notes || "";
   setBookingStatus("");
   bookingDialog.showModal();
 }
@@ -523,6 +621,13 @@ function runDemo() {
   setBookingStatus("Demo mode: add Firebase config to go live.", "info");
   renderTranscript({ final: "", partial: "" });
   renderAi(null);
+  renderCallDetails({
+    callerName: "Jamie Patel",
+    callerNumber: "+1 555 010 2000",
+    forwardedTo: "+1 555 777 1988",
+    location: "Seattle, WA",
+    notes: "Demo: water heater not working",
+  });
   renderActivity(null);
 
   const transcriptSteps = [
@@ -618,6 +723,7 @@ bookingCancelButton.addEventListener("click", () => bookingDialog.close());
 bookingForm.addEventListener("submit", submitBooking);
 window.addEventListener("beforeunload", clearDemoTimers);
 
+renderCallDetails(null);
 updateBookButton();
 
 if (hasFirebaseConfig) {
