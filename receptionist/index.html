@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GV AI Co-pilot</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Receptionist Co-pilot</h1>
+        <p class="status" id="call-status">Waiting for call…</p>
+      </header>
+      <section class="panels">
+        <article class="panel" id="transcript-panel">
+          <h2>Live transcript</h2>
+          <div id="transcript-text" class="transcript"></div>
+        </article>
+        <article class="panel" id="insights-panel">
+          <h2>AI assistant</h2>
+          <div id="ai-summary" class="card"></div>
+          <div id="ai-actions" class="card"></div>
+          <button id="book-button" disabled>Book appointment</button>
+          <p class="hint">Use ?call=&lt;CallSid&gt; in the URL to pin a conversation.</p>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      // Fill this object with your Firebase project configuration (Firebase console → Project settings → General).
+      window.FIREBASE_CONFIG = {
+        apiKey: "",
+        authDomain: "",
+        databaseURL: "",
+        projectId: "",
+        storageBucket: "",
+        messagingSenderId: "",
+        appId: "",
+      };
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
